@@ -9,7 +9,18 @@ import (
 	"github.com/emersion/go-webdav/internal"
 )
 
-// 自定义的webdav扩展Handler，处理定制逻辑，internal包无法在外部使用，所以需要在这里实现
+// PHAssetHandler 处理 Apple 照片资产的 PROPFIND 请求。
+//
+// 采用 go-webdav 库实现是因为它提供了 Backend 接口，
+// 可以完全控制 PROPFIND 响应，从而实现"以 Asset 为单位返回信息"的需求。
+// 标准库 golang.org/x/net/webdav 的定制能力不足以支持这个需求。
+//
+// 上层 backupWebDAVHandler 根据请求特征决定是否分流到此处。
+// 仅 Apple Photo 备份的 /current 或 /archive 目录的 PROPFIND 请求会到达这里。
+//
+// 更新 Asset 识别逻辑时，需要检查 libscm/util 中的相关函数。
+//
+// [注]：internal包无法在外部使用，所以需要在这里实现一个 Handler。
 type PHAssetHandler struct {
 	FileSystem FileSystem
 }
@@ -91,7 +102,9 @@ func (b *backendPHA) PropFind(r *http.Request, propfind *internal.PropFind, dept
 	return internal.NewMultiStatus(resps...), nil
 }
 
-// 如下方法都不实现，使用默认的实现
+// backendPHA 只实现了 PropFind 方法来处理 Apple 照片资产。
+// 由上层 backupWebDAVHandler分流， PROPFIND 请求才会到达此处。
+// 如下方法都不应该被调用，直接返回未实现错误。
 func (b *backendPHA) Options(r *http.Request) (caps []string, allow []string, err error) {
 	return nil, nil, errors.New("xwebdav: Options not implemented")
 }
