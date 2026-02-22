@@ -490,7 +490,7 @@ func (b *backend) propFindUserPrincipal(ctx context.Context, propfind *internal.
 		calendarHomeSetName: internal.PropFindValue(&calendarHomeSet{
 			Href: internal.Href{Path: homeSetPath},
 		}),
-		internal.ResourceTypeName: internal.PropFindValue(internal.NewResourceType(internal.CollectionName)),
+		internal.ResourceTypeName: internal.PropFindValue(internal.NewResourceType(internal.CollectionName, internal.PrincipalName)),
 	}
 	return internal.NewPropFindResponse(principalPath, propfind, props)
 }
@@ -546,6 +546,13 @@ func (b *backend) propFindCalendar(ctx context.Context, propfind *internal.PropF
 				Comp: components,
 			}, nil
 		},
+		// TODO: Gather UserPrivilege from backend to control read-and-write
+		internal.CurrentUserPrivilegeSetName: internal.PropFindValue(&internal.CurrentUserPrivilegeSet{
+			Privilege: []internal.Privilege{{
+				Read:  &struct{}{},
+				Write: &struct{}{},
+			}},
+		}),
 	}
 
 	if cal.Name != "" {

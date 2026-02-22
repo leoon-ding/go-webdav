@@ -21,7 +21,11 @@ var (
 	GetLastModifiedName  = xml.Name{Namespace, "getlastmodified"}
 	GetETagName          = xml.Name{Namespace, "getetag"}
 
-	CurrentUserPrincipalName = xml.Name{Namespace, "current-user-principal"}
+	CollectionName = xml.Name{Namespace, "collection"}
+	PrincipalName  = xml.Name{Namespace, "principal"}
+
+	CurrentUserPrincipalName    = xml.Name{Namespace, "current-user-principal"}
+	CurrentUserPrivilegeSetName = xml.Name{Namespace, "current-user-privilege-set"}
 )
 
 type Status struct {
@@ -155,10 +159,16 @@ func (resp *Response) Err() error {
 		}
 	}
 
-	return &HTTPError{
-		Code: resp.Status.Code,
-		Err:  err,
+	err = &HTTPError{Code: resp.Status.Code, Err: err}
+	if len(resp.Hrefs) == 0 {
+		return err
 	}
+
+	hrefErrs := make([]error, len(resp.Hrefs))
+	for i, href := range resp.Hrefs {
+		hrefErrs[i] = &HrefError{Href: url.URL(href), Err: err}
+	}
+	return errors.Join(hrefErrs...)
 }
 
 func (resp *Response) Path() (string, error) {
@@ -332,8 +342,6 @@ func (t *ResourceType) Is(name xml.Name) bool {
 	return false
 }
 
-var CollectionName = xml.Name{Namespace, "collection"}
-
 // https://tools.ietf.org/html/rfc4918#section-15.4
 type GetContentLength struct {
 	XMLName xml.Name `xml:"DAV: getcontentlength"`
@@ -449,4 +457,17 @@ type SyncCollectionQuery struct {
 type Limit struct {
 	XMLName  xml.Name `xml:"DAV: limit"`
 	NResults uint     `xml:"nresults"`
+}
+
+// https://tools.ietf.org/html/rfc3744#section-5.4
+type CurrentUserPrivilegeSet struct {
+	XMLName   xml.Name `xml:"DAV: current-user-privilege-set"`
+	Privilege []Privilege
+}
+
+// https://tools.ietf.org/html/rfc3744#section-5.4
+type Privilege struct {
+	XMLName xml.Name  `xml:"DAV: privilege"`
+	Read    *struct{} `xml:"DAV: read,omitempty"`
+	Write   *struct{} `xml:"DAV: write,omitempty"`
 }
