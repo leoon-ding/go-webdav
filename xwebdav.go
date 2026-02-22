@@ -2,7 +2,6 @@ package webdav
 
 import (
 	"errors"
-	"libscm/util"
 	"net/http"
 	"path"
 
@@ -18,11 +17,12 @@ import (
 // 上层 backupWebDAVHandler 根据请求特征决定是否分流到此处。
 // 仅 Apple Photo 备份的 /current 或 /archive 目录的 PROPFIND 请求会到达这里。
 //
-// 更新 Asset 识别逻辑时，需要检查 libscm/util 中的相关函数。
+// Asset 识别逻辑通过 Resolver 注入，避免 go-webdav 反向依赖业务仓。
 //
 // [注]：internal包无法在外部使用，所以需要在这里实现一个 Handler。
 type PHAssetHandler struct {
 	FileSystem FileSystem
+	Resolver   PHAssetResolver
 }
 
 func (h *PHAssetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -30,14 +30,31 @@ func (h *PHAssetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "xwebdav: no filesystem available", http.StatusInternalServerError)
 		return
 	}
+	if h.Resolver == nil {
+		http.Error(w, "xwebdav: no resolver available", http.StatusInternalServerError)
+		return
+	}
 
-	b := backendPHA{&backend{h.FileSystem}}
+	b := backendPHA{
+		backend:  &backend{h.FileSystem},
+		resolver: h.Resolver,
+	}
 	hh := internal.Handler{Backend: &b}
 	hh.ServeHTTP(w, r)
 }
 
+// PHAssetResolver abstracts business-specific path/asset parsing logic.
+// Callers (e.g. libscm) should inject an implementation.
+type PHAssetResolver interface {
+	IsVideoFile(path string) bool
+	IsImageFile(path string) bool
+	ParseApplePHAssetName(name string) (assetType string, assetName string, err error)
+	OriginalNameFromArchiveName(name string) string
+}
+
 type backendPHA struct {
 	*backend
+	resolver PHAssetResolver
 }
 
 // 实现Apple 备份照片的浏览逻辑，以Asset为单位返回信息
@@ -64,20 +81,20 @@ func (b *backendPHA) PropFind(r *http.Request, propfind *internal.PropFind, dept
 			// 查找渲染的主资产信息
 			// 目录名中携带了类型信息，直接通过目录名判断是否视频or图片
 			found := false
-			if util.IsVideoFile(child.Path) {
+			if b.resolver.IsVideoFile(child.Path) {
 				item, err = b.FileSystem.Stat(r.Context(), path.Join(child.Path, "FullSizeRender.mov"))
 				found = err == nil
-			} else if util.IsImageFile(child.Path) {
+			} else if b.resolver.IsImageFile(child.Path) {
 				item, err = b.FileSystem.Stat(r.Context(), path.Join(child.Path, "FullSizeRender.jpg"))
 				found = err == nil
 			}
 
 			// 未找到渲染信息，解析名称, 获取主资产名
 			if !found {
-				_, name, err := util.ParseApplePHAssetName(path.Base(child.Path))
+				_, name, err := b.resolver.ParseApplePHAssetName(path.Base(child.Path))
 				if err != nil && r.URL.Path == "/archive" {
 					// 解析失败，尝试从archive目录名中获取原始名称
-					name = util.RetrieveOriginalNameFromApplePHAssetArchiveName(path.Base(child.Path))
+					name = b.resolver.OriginalNameFromArchiveName(path.Base(child.Path))
 				}
 
 				if name != "" {
