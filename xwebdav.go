@@ -1,9 +1,9 @@
 package webdav
 
 import (
+	"context"
 	"errors"
 	"net/http"
-	"path"
 
 	"github.com/emersion/go-webdav/internal"
 )
@@ -46,10 +46,7 @@ func (h *PHAssetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // PHAssetResolver abstracts business-specific path/asset parsing logic.
 // Callers (e.g. libscm) should inject an implementation.
 type PHAssetResolver interface {
-	IsVideoFile(path string) bool
-	IsImageFile(path string) bool
-	ParseApplePHAssetName(name string) (assetType string, assetName string, err error)
-	OriginalNameFromArchiveName(name string) string
+	ResolvePrimary(ctx context.Context, fs FileSystem, scopePath string, child FileInfo) (*FileInfo, error)
 }
 
 type backendPHA struct {
@@ -78,33 +75,12 @@ func (b *backendPHA) PropFind(r *http.Request, propfind *internal.PropFind, dept
 	for i, child := range children {
 		item := &child
 		if child.IsDir && child.Path != r.URL.Path {
-			// 查找渲染的主资产信息
-			// 目录名中携带了类型信息，直接通过目录名判断是否视频or图片
-			found := false
-			if b.resolver.IsVideoFile(child.Path) {
-				item, err = b.FileSystem.Stat(r.Context(), path.Join(child.Path, "FullSizeRender.mov"))
-				found = err == nil
-			} else if b.resolver.IsImageFile(child.Path) {
-				item, err = b.FileSystem.Stat(r.Context(), path.Join(child.Path, "FullSizeRender.jpg"))
-				found = err == nil
+			resolved, resolveErr := b.resolver.ResolvePrimary(r.Context(), b.FileSystem, r.URL.Path, child)
+			if resolveErr != nil {
+				return nil, resolveErr
 			}
-
-			// 未找到渲染信息，解析名称, 获取主资产名
-			if !found {
-				_, name, err := b.resolver.ParseApplePHAssetName(path.Base(child.Path))
-				if err != nil && r.URL.Path == "/archive" {
-					// 解析失败，尝试从archive目录名中获取原始名称
-					name = b.resolver.OriginalNameFromArchiveName(path.Base(child.Path))
-				}
-
-				if name != "" {
-					// 通过名称获取主资产信息
-					item, _ = b.FileSystem.Stat(r.Context(), path.Join(child.Path, name))
-				}
-			}
-
-			if item == nil {
-				item = &child // 没有找到可用信息，继续使用原始信息吧
+			if resolved != nil {
+				item = resolved
 			}
 		}
 
